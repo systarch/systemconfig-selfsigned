@@ -1,0 +1,23 @@
+{
+  "name": "systemconfig-selfsigned",
+  "version": "1.0.0",
+  "author": "Systemarchitektur AG",
+  "summary": "PKI certificate management for CA/Intermediate/Server/Client certificates",
+  "tags": [],
+  "license": "Apache-2.0",
+  "source": "https://github.com/systarch/systemconfig-selfsigned",
+  "dependencies": [
+    {
+      "name": "puppetlabs-stdlib",
+      "version_requirement": ">= 4.25.0"
+    },
+    {
+	    "name":"puppetlabs-ruby_task_helper",
+	    "version_requirement":">= 0.4.0"
+    }
+  ],
+  "operatingsystem_support": [
+    { "operatingsystem": "Debian", "operatingsystemrelease": ["8", "9", "10"]},
+    { "operatingsystem": "Ubuntu", "operatingsystemrelease": ["20.04"]}
+  ]
+}

@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# TODO agregate generic helper functions in a library somehwere...
+info() { echo -e "\033[m${1}\033[m"; }
+warning() { echo -e "\033[0;33mWARNING: ${1}\033[m"; }
+fatal() { echo -e "\033[0;31mFATAL: ${1}\033[m"; exit 1; }
+success() { echo -e "\033[0;32mSUCCESS: ${1}\033[m"; }
+run() { echo -e "\033[90m${*}\033[0;37m"; "${@}";}
+remove_file() { [ ! -e "${1}" ] || rm -f "${1}"; }
+
+SUBJECT_KEY_FILE="${SUBJECT_KEY_FILE:-<%= @common_name %>/<%= @certificate_type %>.privkey.pem}"
+SUBJECT_CSR_FILE="${SUBJECT_CSR_FILE:-<%= @common_name %>/<%= @certificate_type %>.csr}"
+SUBJECT_CERT_FILE="${SUBJECT_CERT_FILE:-<%= @common_name %>/<%= @certificate_type %>.cert.pem}"
+SUBJECT_CHAIN_FILE="${SUBJECT_CHAIN_FILE:-<%= @common_name %>/<%= @certificate_type %>.chain.pem}"
+SUBJECT_FULLCHAIN_FILE="${SUBJECT_FULLCHAIN_FILE:-<%= @common_name %>/<%= @certificate_type %>.fullchain.pem}"
+
+# switch to the systemconfig main directory to see both the CA and the subject
+run cd "$(dirname "${0}")/.." || fatal "Could not change to directory ${0}"
+
+# Remove any residues from previous runs. Might improve by adding safety levels=ask|force|refuse
+remove_file "${SUBJECT_CSR_FILE}"
+remove_file "${SUBJECT_KEY_FILE}"
+remove_file "${SUBJECT_CERT_FILE}"
+remove_file "${SUBJECT_CHAIN_FILE}"
+remove_file "${SUBJECT_FULLCHAIN_FILE}"
+
+# Create the server key and csr
+run openssl req -new -nodes \
+            -config "<%= @common_name %>/<%= @certificate_type %>.openssl.cnf" \
+            -keyout "${SUBJECT_KEY_FILE}" \
+            -out "${SUBJECT_CSR_FILE}" \
+|| fatal "Could not create the <%= @certificate_type %> key and CSR for '<%= @common_name %>'"
+
+run chmod 0400 "${SUBJECT_KEY_FILE}" \
+|| fatal "<%= @certificate_type %> <%= @common_name %> does not have a private key"
+
+if [ -e "<%= @issuer_id %>.openssl.cnf" ]; then
+  # Issue the <%= @certificate_type %> certificate for <%= @common_name %>
+  run openssl ca -batch -notext \
+             -config "<%= @issuer_id %>.openssl.cnf" \
+             -in "${SUBJECT_CSR_FILE}" \
+             -out "${SUBJECT_CERT_FILE}" \
+             -days "<%= @days %>" \
+             -extensions "<%= @certificate_type %>_ext" \
+  || fatal "Could not create the <%= @certificate_type %> certificate for '<%= @common_name %>'"
+
+  info "Removing the <%= @common_name %> CSR file"
+  remove_file "${SUBJECT_CSR_FILE}" \
+  || warning "Could not remove CSR file for <%= @common_name %>"
+
+  info "Write-protecting the signed <%= @certificate_type %> certificate file"
+  run chmod 0444 "${SUBJECT_CERT_FILE}" \
+  || warning "Could not write-protect <%= @certificate_type %> certificate"
+
+  info "Create the CA chain for <%= @certificate_type %> certificate"
+  run install -m 0444 "<%= @issuer_id %>/ca.crt" "${SUBJECT_CHAIN_FILE}"
+
+  info "Create the full chain for <%= @certificate_type %> certificate"
+  run cat "${SUBJECT_CERT_FILE}" "${SUBJECT_CHAIN_FILE}" > "${SUBJECT_FULLCHAIN_FILE}"
+  run chmod 0444 "${SUBJECT_FULLCHAIN_FILE}"
+
+  success "Issued <%= @certificate_type %> certificate for subject '<%= @common_name %>'"
+else
+  success "Created <%= @certificate_type %> certificate signing request. Please have it signed by <%= @issuer_id %> next..."
+  echo
+  echo 'cd keys && mkdir -p "<%= @common_name %>"'
+  echo rm -f \"${SUBJECT_CERT_FILE}\" \"${SUBJECT_CHAIN_FILE}\" \"${SUBJECT_FULLCHAIN_FILE}\"
+  echo openssl ca -batch -notext \
+             -config "<%= @issuer_id %>.openssl.cnf" \
+             -in /dev/stdin \
+             -out "${SUBJECT_CERT_FILE}" \
+             -days "<%= @days %>" \
+             -extensions "<%= @certificate_type %>_ext" \
+             '<< @CSR@'
+  cat "${SUBJECT_CSR_FILE}"
+  echo '@CSR@'
+  echo scp "${SUBJECT_CERT_FILE}" root@<%= scope['baseline::fqdn'] %>:"/etc/ssl/${SUBJECT_CERT_FILE}"
+  echo cp -f "<%= @issuer_id %>/ca.crt" "${SUBJECT_CHAIN_FILE}"
+  echo scp "${SUBJECT_CHAIN_FILE}" root@<%= scope['baseline::fqdn'] %>:"/etc/ssl/${SUBJECT_CHAIN_FILE}"
+  echo cat \"${SUBJECT_CERT_FILE}\" \"${SUBJECT_CHAIN_FILE}\" \> \"${SUBJECT_FULLCHAIN_FILE}\"
+  echo scp "${SUBJECT_FULLCHAIN_FILE}" root@<%= scope['baseline::fqdn'] %>:"/etc/ssl/${SUBJECT_FULLCHAIN_FILE}"
+  echo ssh root@<%= scope['baseline::fqdn'] %> puppet apply /etc/puppet/code/environments/production/site.pp
+fi

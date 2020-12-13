@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# TODO agregate generic helper functions in a library somehwere...
+info() { echo -e "\033[m${1}\033[m"; }
+warning() { echo -e "\033[0;33mWARNING: ${1}\033[m"; }
+fatal() { echo -e "\033[0;31mFATAL: ${1}\033[m"; exit 1; }
+success() { echo -e "\033[0;32mSUCCESS: ${1}\033[m"; }
+run() { echo -e "\033[90m${*}\033[0;37m"; "${@}";}
+remove_file() { [ ! -e "${1}" ] || rm -f "${1}"; }
+
+CA_DIR="./<%= @name %>"
+ISSUER_DIR="./<%= @issuer %>"
+SSH_KEY_FILE="${SSH_KEY_FILE:-/root/.ssh/<%= @name %>.signing_ca.id_rsa}"
+CA_KEY_FILE="${CA_KEY_FILE:-<%= @private_key %>}"
+CA_CSR_FILE="${CA_CSR_FILE:-<%= @name %>.csr}"
+CA_CERT_FILE="${CA_CERT_FILE:-<%= @certificate %>}"
+
+# switch to the openssl.cnf directory so we can call openssl from inside and outside the machine
+run cd "$(dirname "${0}")/.." || fatal "Could not change to parent directory of ${0}"
+
+# assert our CA directory exists
+[ -d "${CA_DIR}" ] || fatal "New signing CA directory at ${PWD}/<%= @name %> does not exist"
+# assert the issuer CA directory exists
+[ -d "${ISSUER_DIR}" ] || fatal "Issuer CA directory at ${PWD}/<%= @issuer %> does not exist"
+
+[ -f "${SSH_KEY_FILE}" ] || {
+  # automatically create the root CA ssh-key and sync to the CA's private key directory
+  warning "You have not created a keypair for the <%= @name %> Signing CA yet, so will create one automatically. Just don't use it in production, ok?"
+  run umask 0077
+  run ssh-keygen -b4096 -N '' -C "<%= @name %> Signing CA" -f "${SSH_KEY_FILE}" -m PEM \
+  || fatal "Could not create the <%= @certificate_type %> signing CA private key"
+
+  [ -e "${CA_KEY_FILE}" ] && {
+    info "Removing the previous CA key file at ${CA_KEY_FILE}!"
+    run rm -f "${CA_KEY_FILE}" \
+    || fatal "Removing the previous CA key file failed"
+  }
+}
+
+# Clone the generated key pair for openssl usage (works because we '-m PEM'-ed during ssh-key generation!
+[ -f "${CA_KEY_FILE}" ] || {
+  info "Cloning the SSH key for the root CA to ${CA_KEY_FILE}"
+  run install -m0400 "${SSH_KEY_FILE}" "${CA_KEY_FILE}"
+}
+
+[ -e "<%= @database %>" ] || {
+  info "Assert the <%= @certificate_type %> signing CA has an empty certificate database file"
+  run touch "<%= @database %>"
+}
+
+[ -e "<%= @serial %>" ] || {
+  info "Assert the <%= @certificate_type %> signing CA has an empty serial number file"
+  echo "01" > "<%= @serial %>"
+}
+
+[ -e "<%= @crlnumber %>" ] || {
+  info "Assert the <%= @certificate_type %> signing CA has an empty CRL number file"
+  echo "0001" > "<%= @crlnumber %>"
+}
+
+info "Create the <%= @certificate_type %> signing CA csr"
+run openssl req -new -batch \
+            -config "${CA_DIR}.openssl.cnf" \
+            -key "${CA_KEY_FILE}" \
+            -out "${CA_CSR_FILE}" \
+|| fatal "Could not create the signing CA CSR for <%= @common_name %>."
+
+info "Create the <%= @certificate_type %> signing CA certificate"
+remove_file "${CA_CERT_FILE}"
+run openssl ca -batch -notext \
+           -config openssl.cnf \
+           -in "${CA_CSR_FILE}" \
+           -out "${CA_CERT_FILE}" \
+           -days 3652 \
+           -extensions signing_ca_ext \
+|| fatal "Could not sign the CSR of <%= @common_name %> with the <%= @issuer %> CA."
+
+info "Removing the CSR file"
+remove_file "${CA_CSR_FILE}"
+info "Write-protecting the signed certificate file"
+run chmod 0444 "${CA_CERT_FILE}"
+
+info "Publish the <%= @certificate_type %> signing CRL"
+/usr/local/bin/selfsigned-crl-publish > crl/<%= @issuer %>.crl
+
+
+info "TODO handle chain.pem and distribution"
+# Create the chain bundle if this is a sub-CA
+# if [ -f "${PARENT}/ca/chain.pem" ]; then
+#     cat ${PARENT}/ca/chain.pem > ca/chain.pem
+# fi
+# cat ca/ca.crt >> ca/chain.pem

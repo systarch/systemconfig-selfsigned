@@ -1,0 +1,82 @@
+#!/bin/bash
+
+# TODO aggregate generic helper functions in a library somehwere...
+info() { echo -e "\033[m${1}\033[m"; }
+warning() { echo -e "\033[0;33mWARNING: ${1}\033[m"; }
+fatal() { echo -e "\033[0;31mFATAL: ${1}\033[m"; exit 1; }
+success() { echo -e "\033[0;32mSUCCESS: ${1}\033[m"; }
+run() { echo -e "\033[90m${*}\033[0;37m"; "${@}";}
+remove_file() { [ ! -e "${1}" ] || rm -f "${1}"; }
+
+CA_DIR="./<%= scope['selfsigned::root_ca::dir'] %>"
+SSH_KEY_FILE="${SSH_KEY_FILE:-/root/.ssh/<%= scope['selfsigned::root_ca::dir'] %>.root_ca.id_rsa}"
+CA_KEY_FILE="${CA_KEY_FILE:-<%= scope['selfsigned::root_ca::private_key'] %>}"
+CA_CERT_FILE="${CA_CERT_FILE:-<%= scope['selfsigned::root_ca::certificate'] %>}"
+
+
+# switch to the openssl.cnf directory so we can call openssl from inside and outside the machine
+run cd "$(dirname $0)" || fatal "Could not change to directory ${0}"
+# assert the CA_DIR exists
+[ -d "${CA_DIR}" ] || fatal "${PWD}/<%= scope['selfsigned::root_ca::dir'] %> does not exist"
+
+[ -f "${SSH_KEY_FILE}" ] || {
+  # automatically create the root CA ssh-key and sync to the CA's private key directory
+  warning "You have not created a keypair for the root CA yet, so will create one automatically. Just don't use it in production, ok?"
+  run umask 0077
+  run ssh-keygen -b4096 -N '' -C "<%= scope['selfsigned::root_ca::dir'] %> Root CA" -f "${SSH_KEY_FILE}" -m PEM
+
+  [ -e "${CA_KEY_FILE}" ] && {
+    info "Removing the previous CA key file at ${CA_KEY_FILE}!"
+    run rm -f "${CA_KEY_FILE}"
+  }
+}
+
+# Clone the generated key pair for openssl usage (works because we '-m PEM'-ed during ssh-key generation!
+[ -f "${CA_KEY_FILE}" ] || {
+  info "Cloning the SSH key for the root CA to ${CA_KEY_FILE}"
+  run install -m0400 "${SSH_KEY_FILE}" "${CA_KEY_FILE}"
+}
+
+[ -e "<%= scope['selfsigned::root_ca::database'] %>" ] || {
+  info "Assert we have an empty certificate database file"
+  run touch "<%= scope['selfsigned::root_ca::database'] %>"
+}
+
+[ -e "<%= scope['selfsigned::root_ca::serial'] %>" ] || {
+  info "Assert we have an empty serial number file"
+  echo "01" > "<%= scope['selfsigned::root_ca::serial'] %>"
+}
+
+[ -e "<%= scope['selfsigned::root_ca::crlnumber'] %>" ] || {
+  info "Assert we have an empty CRL number file"
+  echo "0001" > "<%= scope['selfsigned::root_ca::crlnumber'] %>"
+}
+
+info "Creating the certificate signing request for the root CA:"
+run openssl req -new -batch \
+  -config openssl.cnf \
+  -key "${CA_KEY_FILE}" \
+  -out ca.csr \
+|| fatal "Could not create the Certificate Signing Request for the root CA"
+
+info "Create the root CA certificate"
+remove_file "${CA_CERT_FILE}"
+openssl ca -selfsign -batch -notext \
+   -config openssl.cnf \
+   -in ca.csr \
+   -out "${CA_CERT_FILE}" \
+   -days 3652 \
+   -extensions root_ca_ext \
+|| fatal "Could not selfsign the root CA certificate"
+run unlink ca.csr
+run chmod 0444 "${CA_CERT_FILE}"
+
+# Optionally install the root CA in the certificates section of this machine
+[ -d "/etc/ssl/certs" ] && {
+  info "Installing the CA certificate in the trust anchors list of ${HOSTNAME}"
+  remove_file "/etc/ssl/certs/<%= scope['selfsigned::root_ca::dir'] %>.pem"
+  install -m0444 "${CA_CERT_FILE}" "/etc/ssl/certs/<%= scope['selfsigned::root_ca::dir'] %>.pem"
+  run "/usr/bin/c_rehash"
+}
+
+success "Certificate Authority '<%= scope['selfsigned::common_name'] %>' has been created at ${PWD}/<%= scope['selfsigned::root_ca::dir'] %>"

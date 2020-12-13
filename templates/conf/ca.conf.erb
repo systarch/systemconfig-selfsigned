@@ -1,0 +1,141 @@
+
+# System default
+openssl_conf = default_conf
+
+# To use this configuration file with the "-extfile" option of the
+# "openssl x509" utility, name here the section containing the
+# X.509v3 extensions to use:
+# extensions		=
+# (Alternatively, use a configuration file that has only
+# X.509v3 extensions in its main [= default] section.)
+
+[ default ]
+ca                      = <%= scope['selfsigned::root_ca::dir'] %>
+domain                  = <%= scope['selfsigned::domain'] %>
+base_url                = <%= scope['selfsigned::base_url'] %>      # CA base URL
+aia_url                 = <%= scope['selfsigned::aia_url'] %>       # CA certificate URL
+crl_url                 = <%= scope['selfsigned::crl_url'] %>       # CRL distribution point
+name_opt                = <%= scope['selfsigned::name_opt'] %>      # Display UTF-8 characters
+
+# CA certificate request
+# Configuration for `openssl req ...`
+
+[ req ]
+default_bits            = 4096                  # RSA key size
+default_days            = 3652                  # How long to certify for
+encrypt_key             = yes                   # Protect private key
+default_md              = sha256                # MD to use
+utf8                    = yes                   # Input is UTF-8
+string_mask             = utf8only              # Emit UTF-8 strings
+prompt                  = no                    # Don't prompt for DN
+distinguished_name      = ca_dn                 # DN section
+req_extensions          = ca_reqext             # Desired extensions
+
+[ ca_dn ]
+countryName             = "<%= scope['selfsigned::country_name'] %>"
+organizationName        = "<%= scope['selfsigned::organization_name'] %>"
+commonName              = "<%= scope['selfsigned::common_name'] %>"
+<%- if scope['selfsigned::state_or_province_name'] != '' -%>
+stateOrProvinceName     = "<%= scope['selfsigned::state_or_province_name'] %>"
+<%- end -%>
+<%- if scope['selfsigned::locality_name'] != '' -%>
+localityName            = "<%= scope['selfsigned::locality_name'] %>"
+<%- end -%>
+<%- if scope['selfsigned::organizational_unit_name'] != '' %>
+organizationalUnitName  = "<%= scope['selfsigned::organizational_unit_name'] %>"
+<%- end -%>
+
+[ ca_reqext ]
+keyUsage                = critical,keyCertSign,cRLSign
+basicConstraints        = critical,CA:true
+subjectKeyIdentifier    = hash
+
+# CA operational settings
+# Configuration for `openssl ca ...`
+
+[ ca ]
+default_ca              = root_ca               # The default CA section
+
+[ root_ca ]
+dir		                  = ./<%= scope['selfsigned::root_ca::dir'] %>	           # Where everything is kept
+certificate             = <%= scope['selfsigned::root_ca::certificate'] %>       # The CA cert
+private_key             = <%= scope['selfsigned::root_ca::private_key'] %>       # CA private key
+serial                  = <%= scope['selfsigned::root_ca::serial'] %>            # Serial number file
+crlnumber               = <%= scope['selfsigned::root_ca::crlnumber'] %>         # CRL number file
+database                = <%= scope['selfsigned::root_ca::database'] %>          # Index file
+new_certs_dir           = <%= scope['selfsigned::root_ca::new_certs_dir'] %>     # Certificate archive
+unique_subject          = <%= scope['selfsigned::root_ca::unique_subject'] %>    # Require unique subject
+default_md              = <%= scope['selfsigned::root_ca::default_md'] %>        # MD to use
+policy                  = <%= scope['selfsigned::root_ca::policy'] %>            # Default naming policy
+email_in_dn             = <%= scope['selfsigned::root_ca::email_in_dn'] %>       # Add email to cert DN
+preserve                = <%= scope['selfsigned::root_ca::preserve'] %>          # Keep passed DN ordering
+name_opt                = <%= scope['selfsigned::root_ca::name_opt'] %>          # Subject DN display options
+cert_opt                = <%= scope['selfsigned::root_ca::cert_opt'] %>          # Certificate display options
+copy_extensions         = <%= scope['selfsigned::root_ca::copy_extensions'] %>   # Copy extensions from CSR
+x509_extensions         = <%= scope['selfsigned::root_ca::x509_extensions'] %>   # Default cert extensions
+default_crl_days        = <%= scope['selfsigned::root_ca::default_crl_days'] %>  # How long before next CRL
+crl_extensions          = <%= scope['selfsigned::root_ca::crl_extensions'] %>    # CRL extensions
+
+[ match_pol ]
+countryName             = match                 # Must match
+stateOrProvinceName     = optional              # Included if present
+localityName            = optional              # Included if present
+organizationName        = match                 # Must match
+organizationalUnitName  = optional              # Included if present
+commonName              = supplied              # Must be present
+
+# Extensions for this root CA
+[ root_ca_ext ]
+keyUsage                = critical,keyCertSign,cRLSign
+basicConstraints        = critical,CA:true
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid:always
+
+# Extensions for signing CAs issued by this root CA
+[ signing_ca_ext ]
+keyUsage                = critical,keyCertSign,cRLSign
+basicConstraints        = critical,CA:true,pathlen:0
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid:always
+authorityInfoAccess     = @issuer_info
+crlDistributionPoints   = @crl_info
+
+# Extensions for signing certs issued by this signing CA
+[ server_ext ]
+keyUsage                = critical,digitalSignature,keyEncipherment
+basicConstraints        = CA:false
+extendedKeyUsage        = serverAuth,clientAuth
+subjectKeyIdentifier    = hash
+#### subjectAltName          = $ENV::SAN
+authorityKeyIdentifier  = keyid:always
+authorityInfoAccess     = @issuer_info
+crlDistributionPoints   = @crl_info
+
+[ client_ext ]
+keyUsage                = critical,digitalSignature
+basicConstraints        = CA:false
+extendedKeyUsage        = clientAuth
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid:always
+authorityInfoAccess     = @issuer_info
+crlDistributionPoints   = @crl_info
+
+[ crl_ext ]
+authorityKeyIdentifier  = keyid:always
+authorityInfoAccess     = @issuer_info
+
+[ issuer_info ]
+caIssuers;URI.0         = $aia_url
+
+[ crl_info ]
+URI.0                   = $crl_url
+
+[default_conf]
+ssl_conf = ssl_sect
+
+[ssl_sect]
+system_default = system_default_sect
+
+[system_default_sect]
+MinProtocol = TLSv1.2
+CipherString = DEFAULT@SECLEVEL=2

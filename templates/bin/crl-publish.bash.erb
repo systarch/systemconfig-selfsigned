@@ -1,0 +1,33 @@
+#!/bin/bash
+
+FORMAT="${1:-pem}"
+
+info() { echo -e "\033[m${1}\033[m"; }
+warning() { echo -e "\033[0;33mWARNING: ${1}\033[m"; }
+fatal() { echo -e "\033[0;31mFATAL: ${1}\033[m"; exit 1; }
+success() { echo -e "\033[0;32mSUCCESS: ${1}\033[m"; }
+run() { echo -e "\033[90m${*}\033[0;37m"; "${@}";}
+
+crl_update() {
+  openssl ca \
+  -gencrl \
+  -config openssl.cnf \
+  -out -
+}
+
+pem2der() {
+  openssl crl -inform pem -in - -outform der -out -
+}
+
+cd /etc/ssl;
+case "${FORMAT}" in
+  pem)
+    crl_update
+    ;;
+  der)
+    crl_update | pem2der
+    ;;
+  *)
+    fatal "Unknown format '${FORMAT}'"
+    ;;
+esac
